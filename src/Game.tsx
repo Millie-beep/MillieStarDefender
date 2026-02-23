@@ -38,6 +38,7 @@ interface City {
   id: number;
   x: number;
   active: boolean;
+  shields: number;
 }
 
 interface Battery {
@@ -55,6 +56,7 @@ const INTERCEPTOR_SPEED = 12;
 const ROCKET_BASE_SPEED = 0.5; // Slightly slower start for level 1
 const WIN_SCORE_PER_LEVEL = 200; // Score needed to pass each level
 const MAX_LEVELS = 10;
+const BG_IMAGE_URL = '/sky.png';
 
 interface Star {
   x: number;
@@ -114,21 +116,22 @@ export default function Game() {
   const [round, setRound] = useState(1);
   
   // Game Objects
+  const bgImageRef = useRef<HTMLImageElement | null>(null);
   const starsRef = useRef<Star[]>([]);
   const rocketsRef = useRef<Rocket[]>([]);
   const interceptorsRef = useRef<Interceptor[]>([]);
   const citiesRef = useRef<City[]>([
-    { id: 1, x: 150, active: true },
-    { id: 2, x: 250, active: true },
-    { id: 3, x: 350, active: true },
-    { id: 4, x: 650, active: true },
-    { id: 5, x: 750, active: true },
-    { id: 6, x: 850, active: true },
+    { id: 1, x: 200, active: true, shields: 3 },
+    { id: 2, x: 300, active: true, shields: 3 },
+    { id: 3, x: 400, active: true, shields: 3 },
+    { id: 4, x: 600, active: true, shields: 3 },
+    { id: 5, x: 700, active: true, shields: 3 },
+    { id: 6, x: 800, active: true, shields: 3 },
   ]);
   const batteriesRef = useRef<Battery[]>([
-    { id: 0, x: 50, missiles: 20, maxMissiles: 20, active: true },
+    { id: 0, x: 100, missiles: 20, maxMissiles: 20, active: true },
     { id: 1, x: 500, missiles: 40, maxMissiles: 40, active: true },
-    { id: 2, x: 950, missiles: 20, maxMissiles: 20, active: true },
+    { id: 2, x: 900, missiles: 20, maxMissiles: 20, active: true },
   ]);
 
   const t = TRANSLATIONS[lang];
@@ -141,10 +144,17 @@ export default function Game() {
     setRound(1);
     rocketsRef.current = [];
     interceptorsRef.current = [];
-    citiesRef.current = citiesRef.current.map(c => ({ ...c, active: true }));
+    citiesRef.current = citiesRef.current.map(c => ({ ...c, active: true, shields: 3 }));
     batteriesRef.current = batteriesRef.current.map(b => ({ ...b, active: true, missiles: b.maxMissiles }));
     
-    // Initialize stars
+    // Load background image
+    const img = new Image();
+    img.src = BG_IMAGE_URL;
+    img.onload = () => {
+      bgImageRef.current = img;
+    };
+
+    // Initialize stars (as fallback/overlay)
     const stars: Star[] = [];
     for (let i = 0; i < 150; i++) {
       stars.push({
@@ -247,19 +257,25 @@ export default function Game() {
       const battery = bestBattery as Battery;
       battery.missiles -= 1;
       
-      const newInterceptor: Interceptor = {
+      const createInterceptor = (offsetX: number = 0) => ({
         id: Date.now() + Math.random(),
-        start: { x: battery.x, y: WORLD_HEIGHT - 40 },
-        pos: { x: battery.x, y: WORLD_HEIGHT - 40 },
-        target: { x: targetX, y: targetY },
+        start: { x: battery.x + offsetX, y: WORLD_HEIGHT - 40 },
+        pos: { x: battery.x + offsetX, y: WORLD_HEIGHT - 40 },
+        target: { x: targetX + offsetX, y: targetY },
         speed: INTERCEPTOR_SPEED,
-        state: 'FLYING',
+        state: 'FLYING' as const,
         explosionRadius: 0,
         maxExplosionRadius: 60,
         explosionTimer: 0
-      };
-      
-      interceptorsRef.current.push(newInterceptor);
+      });
+
+      if (battery.id === 1) { // Middle battery fires triple
+        interceptorsRef.current.push(createInterceptor(-30));
+        interceptorsRef.current.push(createInterceptor(0));
+        interceptorsRef.current.push(createInterceptor(30));
+      } else {
+        interceptorsRef.current.push(createInterceptor(0));
+      }
     }
   };
 
@@ -311,7 +327,10 @@ export default function Game() {
           rocket.destroyed = true;
           // Damage city or battery
           const city = citiesRef.current.find(c => c.x === rocket.target.x);
-          if (city) city.active = false;
+          if (city && city.active) {
+            city.shields -= 1;
+            if (city.shields <= 0) city.active = false;
+          }
           const battery = batteriesRef.current.find(b => b.x === rocket.target.x);
           if (battery) battery.active = false;
         }
@@ -377,9 +396,10 @@ export default function Game() {
       // Check Round End (No more missiles and no more active rockets/interceptors)
       const totalMissiles = batteriesRef.current.reduce((acc, b) => acc + b.missiles, 0);
       if (totalMissiles === 0 && rocketsRef.current.length === 0 && interceptorsRef.current.length === 0) {
-        // Bonus points for remaining cities
-        const activeCities = citiesRef.current.filter(c => c.active).length;
-        setScore(s => s + activeCities * 50);
+        // Bonus points for remaining cities and shields
+        const activeCities = citiesRef.current.filter(c => c.active);
+        const bonus = activeCities.length * 50 + activeCities.reduce((acc, c) => acc + c.shields * 20, 0);
+        setScore(s => s + bonus);
         setGameState('ROUND_END');
       }
 
@@ -397,7 +417,15 @@ export default function Game() {
       const scaleX = canvas.width / WORLD_WIDTH;
       const scaleY = canvas.height / WORLD_HEIGHT;
 
-      // Draw Stars
+      // Draw Background Image
+      if (bgImageRef.current) {
+        ctx.drawImage(bgImageRef.current, 0, 0, canvas.width, canvas.height);
+      } else {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      // Draw Stars (Overlay)
       ctx.fillStyle = '#ffffff';
       starsRef.current.forEach(star => {
         ctx.globalAlpha = star.opacity;
@@ -499,6 +527,20 @@ export default function Game() {
       // Draw Cities
       citiesRef.current.forEach(c => {
         if (c.active) {
+          // Draw Shield
+          if (c.shields > 0) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(c.x * scaleX, (WORLD_HEIGHT - 35) * scaleY, 30 * scaleX, Math.PI, 0);
+            const shieldOpacity = c.shields / 3 * 0.4;
+            ctx.fillStyle = `rgba(77, 166, 255, ${shieldOpacity})`;
+            ctx.strokeStyle = `rgba(255, 255, 255, ${shieldOpacity * 2})`;
+            ctx.lineWidth = 2;
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+          }
+
           ctx.fillStyle = '#4da6ff';
           ctx.fillRect(c.x * scaleX - 15, canvas.height - 35, 30, 15);
           ctx.fillStyle = '#2d5a8a';
